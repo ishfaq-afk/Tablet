@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tablet Lock — Parent Dashboard</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: system-ui, sans-serif; background:#0f1626; color:#e8edf7;
+         margin:0; display:flex; min-height:100vh; align-items:center; justify-content:center; padding:20px; }
+  .card { background:#182238; padding:30px; border-radius:16px; width:min(440px,94vw);
+          box-shadow:0 10px 40px rgba(0,0,0,.4); }
+  h1 { font-size:20px; margin:0 0 4px; }
+  p.sub { margin:0 0 20px; color:#8ea0c0; font-size:13px; }
+  label { display:block; font-size:13px; margin:14px 0 6px; color:#b6c4de; }
+  input { width:100%; box-sizing:border-box; padding:11px 12px; border-radius:9px;
+          border:1px solid #2c3a57; background:#0f1626; color:#e8edf7; font-size:14px; }
+  .row { display:flex; gap:12px; margin-top:18px; }
+  button { flex:1; padding:13px; border:0; border-radius:10px; font-size:15px;
+           font-weight:600; cursor:pointer; }
+  .lock { background:#e04a4a; color:#fff; }
+  .unlock { background:#3ba55d; color:#fff; }
+  .timer { background:#e0913a; color:#fff; }
+  .secondary { background:#2c3a57; color:#e8edf7; }
+  .full { width:100%; margin-top:10px; }
+  hr { border:0; border-top:1px solid #2c3a57; margin:22px 0 4px; }
+  #state { margin-top:20px; text-align:center; font-size:16px; font-weight:700; }
+  #msg { margin-top:10px; text-align:center; font-size:12px; color:#8ea0c0; min-height:16px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Tablet Lock</h1>
+  <p class="sub">Control the tablet from any device signed in with your project.</p>
+
+  <label>Device ID (shown on the tablet's setup screen)</label>
+  <input id="deviceId" placeholder="tab_xxxxxxxxxxxx" />
+
+  <div id="state">—</div>
+
+  <div class="row">
+    <button class="lock" onclick="lockNow()">LOCK</button>
+    <button class="unlock" onclick="unlockNow()">UNLOCK</button>
+  </div>
+
+  <label>Lock with countdown (minutes) — auto-unlocks at 0</label>
+  <input id="minutes" type="number" min="1" placeholder="e.g. 30" />
+  <button class="timer full" onclick="lockWithTimer()">LOCK FOR X MINUTES</button>
+
+  <hr>
+
+  <label>Message shown on the lock screen</label>
+  <input id="message" placeholder="e.g. Time's up! Come see Mom." />
+  <button class="secondary full" onclick="setMessage()">Set Message</button>
+
+  <label>Lock-screen wallpaper (image URL)</label>
+  <input id="wp" placeholder="https://.../wallpaper.jpg" />
+  <button class="secondary full" onclick="setWallpaper()">Set Wallpaper</button>
+
+  <hr>
+
+  <div class="row">
+    <button class="secondary" onclick="setHidden(true)">Hide App Icon</button>
+    <button class="secondary" onclick="setHidden(false)">Show App Icon</button>
+  </div>
+
+  <div id="msg"></div>
+</div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getDatabase, ref, set, update, onValue }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyD-HOZHomaEaFx4pPZcfBSyZC5mVFQnwcI",
+    authDomain: "tablets-health.firebaseapp.com",
+    databaseURL: "https://tablets-health-default-rtdb.firebaseio.com",
+    projectId: "tablets-health",
+    storageBucket: "tablets-health.firebasestorage.app",
+    messagingSenderId: "838186907219",
+    appId: "1:838186907219:web:fa1276230de1e620e438a6",
+    measurementId: "G-0NCP002F1H"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+  const idInput = document.getElementById("deviceId");
+  const stateEl = document.getElementById("state");
+  const msgEl = document.getElementById("msg");
+  let unsub = null;
+
+  const saved = localStorage.getItem("deviceId");
+  if (saved) idInput.value = saved;
+
+  function base() { return `devices/${idInput.value.trim()}`; }
+
+  function watch() {
+    const id = idInput.value.trim();
+    localStorage.setItem("deviceId", id);
+    if (unsub) unsub();
+    if (!id) { stateEl.textContent = "—"; return; }
+    unsub = onValue(ref(db, base()), (snap) => {
+      const v = snap.val() || {};
+      if (v.locked === true) {
+        let txt = "LOCKED";
+        if (v.unlockAt && v.unlockAt > Date.now()) {
+          const s = Math.floor((v.unlockAt - Date.now()) / 1000);
+          txt += " - " + String(Math.floor(s/60)).padStart(2,"0") + ":" + String(s%60).padStart(2,"0");
+        }
+        stateEl.textContent = txt; stateEl.style.color = "#e04a4a";
+      } else if (v.locked === false) {
+        stateEl.textContent = "Unlocked"; stateEl.style.color = "#3ba55d";
+      } else {
+        stateEl.textContent = "device not found"; stateEl.style.color = "#8ea0c0";
+      }
+    });
+  }
+  idInput.addEventListener("change", watch);
+  watch();
+  setInterval(() => { if (stateEl.textContent.includes(":")) watch(); }, 1000);
+
+  window.lockNow = async () => {
+    if (!idInput.value.trim()) return;
+    try { await update(ref(db, base()), { locked: true, unlockAt: 0 }); msg("Locked."); }
+    catch (e) { msg("Error: " + e.message); }
+  };
+  window.unlockNow = async () => {
+    try { await update(ref(db, base()), { locked: false, unlockAt: 0 }); msg("Unlocked."); }
+    catch (e) { msg("Error: " + e.message); }
+  };
+  window.lockWithTimer = async () => {
+    const min = parseInt(document.getElementById("minutes").value, 10);
+    if (!min || min < 1) { msg("Enter minutes first."); return; }
+    const unlockAt = Date.now() + min * 60000;
+    try { await update(ref(db, base()), { locked: true, unlockAt }); msg("Locked for " + min + " min."); }
+    catch (e) { msg("Error: " + e.message); }
+  };
+  window.setMessage = async () => {
+    try { await set(ref(db, base() + "/message"), document.getElementById("message").value); msg("Message set."); }
+    catch (e) { msg("Error: " + e.message); }
+  };
+  window.setWallpaper = async () => {
+    const url = document.getElementById("wp").value.trim();
+    if (!url) return;
+    try { await set(ref(db, base() + "/wallpaperUrl"), url); msg("Wallpaper set."); }
+    catch (e) { msg("Error: " + e.message); }
+  };
+  window.setHidden = async (h) => {
+    try { await set(ref(db, base() + "/hidden"), h); msg(h ? "Icon hidden." : "Icon shown."); }
+    catch (e) { msg("Error: " + e.message); }
+  };
+  function msg(t){ msgEl.textContent = t; setTimeout(()=>msgEl.textContent="",2500); }
+</script>
+</body>
+</html>
